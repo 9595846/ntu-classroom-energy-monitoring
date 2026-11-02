@@ -11,6 +11,9 @@ clear;
 clc;
 close all;
 
+% Resolve outputs relative to this file, independent of the caller's directory.
+outputDir = fileparts(mfilename('fullpath'));
+
 %% 1 基础参数
 classroomCount = 397;              % 教室数量
 electricityPrice = 0.85;           % 综合电价，元/kWh
@@ -48,7 +51,7 @@ fprintf('非监管浪费比例：%.2f%%\n', overallWasteRatio * 100);
 fprintf('非监管浪费电费：%.2f 万元\n', totalWasteCost / 1e4);
 fprintf('对应碳排放量：%.2f 吨CO2\n\n', totalWasteCarbonKg / 1000);
 
-writetable(energyTable, '年度用电与浪费估算.csv', 'Encoding', 'UTF-8');
+writetable(energyTable, fullfile(outputDir, '年度用电与浪费估算.csv'), 'Encoding', 'UTF-8');
 
 %% 3 年度用电构成图
 figure('Color', 'w', 'Name', '年度用电构成');
@@ -61,7 +64,7 @@ ylabel('年用电量 万kWh');
 title('教室年度用电构成与非监管浪费');
 legend('正常用电', '非监管浪费', 'Location', 'northwest');
 grid on;
-exportgraphics(gcf, '年度用电构成.png', 'Resolution', 300);
+exportgraphics(gcf, fullfile(outputDir, '年度用电构成.png'), 'Resolution', 300);
 
 %% 4 低中高三种情景分析
 scenario = ["低情景"; "中位情景"; "高情景"];
@@ -79,7 +82,7 @@ scenarioTable = table( ...
 
 disp('表 2  低中高情景分析');
 disp(scenarioTable);
-writetable(scenarioTable, '低中高情景分析.csv', 'Encoding', 'UTF-8');
+writetable(scenarioTable, fullfile(outputDir, '低中高情景分析.csv'), 'Encoding', 'UTF-8');
 
 figure('Color', 'w', 'Name', '情景分析');
 yyaxis left;
@@ -92,7 +95,7 @@ plot(categorical(scenario), scenarioWasteRate * 100, '-o', ...
 ylabel('浪费率 %');
 title('不同情景下的非监管用电浪费');
 grid on;
-exportgraphics(gcf, '情景分析.png', 'Resolution', 300);
+exportgraphics(gcf, fullfile(outputDir, '情景分析.png'), 'Resolution', 300);
 
 %% 5 关键参数敏感性分析
 % 分析空调年运行时间和空调浪费比例变化对总浪费量的影响。
@@ -114,7 +117,7 @@ title('总浪费电量对空调参数的敏感性');
 colorbar;
 grid on;
 view(135, 30);
-exportgraphics(gcf, '空调参数敏感性分析.png', 'Resolution', 300);
+exportgraphics(gcf, fullfile(outputDir, '空调参数敏感性分析.png'), 'Resolution', 300);
 
 %% 6 单间教室典型日控制仿真
 % 仿真步长为 5 分钟，共 24 小时。
@@ -182,7 +185,7 @@ simulationTable = table( ...
     'VariableNames', { ...
     '时刻_h', '课表有效', '教室有人', '室外温度_C', '自然照度_lx', ...
     '传统控制功率_kW', '节能控制功率_kW'});
-writetable(simulationTable, '典型日控制仿真数据.csv', 'Encoding', 'UTF-8');
+writetable(simulationTable, fullfile(outputDir, '典型日控制仿真数据.csv'), 'Encoding', 'UTF-8');
 
 figure('Color', 'w', 'Name', '典型日控制仿真');
 tiledlayout(2, 1, 'TileSpacing', 'compact');
@@ -212,7 +215,7 @@ title(sprintf('节能前后负荷曲线  典型日节电率 %.1f%%', ...
     savedDayRatio * 100));
 legend('传统控制', '节能控制', 'Location', 'northwest');
 grid on;
-exportgraphics(gcf, '典型日节能控制仿真.png', 'Resolution', 300);
+exportgraphics(gcf, fullfile(outputDir, '典型日节能控制仿真.png'), 'Resolution', 300);
 
 %% 7 节电目标、费用、碳减排和回收期
 annualSavingKWh = (45e4:5e4:65e4)';
@@ -231,7 +234,7 @@ benefitTable = table( ...
 
 disp('表 3  节能效益分析');
 disp(benefitTable);
-writetable(benefitTable, '节能效益分析.csv', 'Encoding', 'UTF-8');
+writetable(benefitTable, fullfile(outputDir, '节能效益分析.csv'), 'Encoding', 'UTF-8');
 
 figure('Color', 'w', 'Name', '节能效益');
 yyaxis left;
@@ -245,7 +248,7 @@ plot(annualSavingWanKWh, paybackYears, '-o', ...
 ylabel('静态回收期 年');
 title('节电目标与经济效益');
 grid on;
-exportgraphics(gcf, '节能效益分析.png', 'Resolution', 300);
+exportgraphics(gcf, fullfile(outputDir, '节能效益分析.png'), 'Resolution', 300);
 
 %% 8 输出主要结论
 fprintf('主要结论\n');
@@ -258,3 +261,34 @@ fprintf('4. 空调运行时间和空置运行比例是最敏感参数。\n');
 fprintf('5. 年节电 45 至 65 万kWh 时，静态回收期约 %.1f 至 %.1f 年。\n', ...
     min(paybackYears), max(paybackYears));
 
+%% 9 导出供报告生成器读取的同一份计算结果
+report.schema_version = 1;
+report.parameters = struct('classroom_count', classroomCount, ...
+    'electricity_price_yuan_kwh', electricityPrice, ...
+    'carbon_factor_kg_kwh', carbonFactor, 'investment_yuan', projectInvestment);
+report.summary = struct('annual_energy_kwh', totalEnergyKWh, ...
+    'waste_energy_kwh', totalWasteKWh, 'waste_cost_yuan', totalWasteCost, ...
+    'waste_ratio', overallWasteRatio, 'waste_carbon_ton', totalWasteCarbonKg / 1000);
+report.equipment = struct('name', cellstr(equipment), ...
+    'power_kw', num2cell(powerKW), 'annual_hours', num2cell(annualHours), ...
+    'waste_ratio', num2cell(wasteRatio), ...
+    'annual_energy_kwh', num2cell(annualEnergyKWh), ...
+    'waste_energy_kwh', num2cell(wasteEnergyKWh), ...
+    'waste_cost_yuan', num2cell(wasteCostYuan));
+report.scenarios = struct('name', cellstr(scenario), ...
+    'annual_energy_kwh', num2cell(scenarioEnergyWanKWh * 1e4), ...
+    'waste_energy_kwh', num2cell(scenarioWasteWanKWh * 1e4), ...
+    'waste_ratio', num2cell(scenarioWasteRate));
+report.benefits = struct('saving_kwh', num2cell(annualSavingKWh), ...
+    'benefit_yuan', num2cell(annualBenefitYuan), ...
+    'carbon_reduction_ton', num2cell(carbonReductionTon), ...
+    'payback_years', num2cell(paybackYears));
+report.provenance = struct('matlab_version', version, ...
+    'source', 'ntu_classroom_energy_analysis.m', 'data_kind', 'engineering_estimate');
+jsonPath = fullfile(outputDir, 'analysis_results.json');
+fid = fopen(jsonPath, 'w', 'n', 'UTF-8');
+assert(fid >= 0, 'Cannot open report JSON: %s', jsonPath);
+closeJSON = onCleanup(@() fclose(fid));
+fprintf(fid, '%s\n', jsonencode(report, 'PrettyPrint', true));
+clear closeJSON;
+fprintf('Report data exported: %s\n', jsonPath);

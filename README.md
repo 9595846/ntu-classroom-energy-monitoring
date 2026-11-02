@@ -35,7 +35,10 @@ matlab/
   *.png
 source/
   build_report.py
+  analysis_data.py
   figures/
+tests/
+  test_report_pipeline.py
 README.md
 requirements.txt
 ```
@@ -57,17 +60,29 @@ cd('matlab')
 run('ntu_classroom_energy_analysis.m')
 ```
 
-运行程序会重新生成 CSV 数据表和 PNG 分析图。程序已在 MATLAB 中完成运行验证。
+运行程序会在 `matlab/` 重新生成 CSV、PNG 和 `analysis_results.json`。JSON 是报告的计算数据入口，包含基础参数、分项用电、情景、收益和 MATLAB 版本。仓库提供一份已运行生成的快照；修改 MATLAB 参数后，先重新运行分析，再生成报告。
 
 ## 报告生成源码
 
-`source/build_report.py` 使用 Python 生成报告并绘制配图。依赖见 `requirements.txt`。在项目根目录运行：
+`source/build_report.py` 从 MATLAB 导出的 JSON 生成数值表格、用电图和计算结论。生成前核验分项合计、费用、碳排放及回收期，拒绝不一致或非有限数据。依赖见 `requirements.txt`。在项目根目录运行：
 
 ```bash
+python -m pip install -r requirements.txt
 python source/build_report.py
 ```
 
-生成报告前请确认脚本中的输出路径符合本机目录结构。
+默认读取 `matlab/analysis_results.json`，报告写入 `docs/南通大学教室节能监控方案设计报告.docx`，图示写入 `source/figures/`；可用 `--data`、`--output` 和 `--font` 指定输入、输出和中文字体：
+
+```bash
+python source/build_report.py --data matlab/analysis_results.json --output docs/report.docx --font /path/to/NotoSansCJK-Regular.ttc
+python -m unittest discover -s tests -v
+```
+
+字体也可通过 `REPORT_FONT` 设置。脚本自动查找 Windows 微软雅黑及常见 macOS/Linux 中文字体路径；找不到时会给出明确错误，避免生成中文缺字图。自定义字体应包含简体中文字形；Word 正文字体仍使用原报告设置，跨系统阅读时应安装相应字体或在 Word 中替换。
+
+数值链路为 **MATLAB 参数与计算 → JSON 校验 → 报告表格、图表与计算结论**。公开资料中的历史教室数、建设策略和分项投资预算仍保留为原方案资料，改变学校、教室规模或投资参数后需另外审阅这些设计假设。仓库现有 Word 为原报告快照；重新运行生成器会覆盖该文件，生成后应检查分页和版式。
+
+测试覆盖基准结果、错误汇总、非有限数据、缺失文件，以及修改电价后表格和正文同步更新。测试需要可用中文字体，可通过 `REPORT_FONT` 指定。
 
 ## 数据与设计说明
 
@@ -84,5 +99,3 @@ python source/build_report.py
 ## 使用范围
 
 本项目用于课程作业、教学交流和方案研究。涉及实际电气改造时，应由具备相应资质的设计、施工和维保单位按照现行标准实施。
-
-
