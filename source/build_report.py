@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import argparse
 import math
+import os
+from analysis_data import load_results
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -14,10 +17,8 @@ from docx.shared import Cm, Inches, Pt, RGBColor
 
 
 ROOT = Path(__file__).resolve().parent
-OUT_DIR = ROOT.parent / "deliverables"
+OUT_DIR = ROOT.parent / "docs"
 FIG_DIR = ROOT / "figures"
-OUT_DIR.mkdir(exist_ok=True)
-FIG_DIR.mkdir(exist_ok=True)
 OUTPUT = OUT_DIR / "南通大学教室节能监控方案设计报告.docx"
 
 NAVY = "17365D"
@@ -30,15 +31,27 @@ MUTED = "5C6773"
 ORANGE = "D97706"
 GREEN = "2E7D32"
 
-FONT_REG = Path(r"C:\Windows\Fonts\msyh.ttc")
-FONT_BOLD = Path(r"C:\Windows\Fonts\msyhbd.ttc")
+FONT_REG = None
+FONT_BOLD = None
+DATA = None
+
+
+def select_font(explicit=None):
+    candidates = [explicit, os.environ.get("REPORT_FONT"),
+                  r"C:\Windows\Fonts\msyh.ttc",
+                  "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                  "/System/Library/Fonts/PingFang.ttc"]
+    for value in candidates:
+        if value and Path(value).is_file():
+            return Path(value)
+        if value and value in (explicit, os.environ.get("REPORT_FONT")):
+            raise ValueError(f"Font does not exist: {value}")
+    raise ValueError("No Chinese font found; pass --font /path/to/CJK-font.ttf or set REPORT_FONT")
 
 
 def pil_font(size: int, bold: bool = False):
-    path = FONT_BOLD if bold and FONT_BOLD.exists() else FONT_REG
-    if path.exists():
-        return ImageFont.truetype(str(path), size=size)
-    return ImageFont.load_default()
+    path = FONT_BOLD if bold else FONT_REG
+    return ImageFont.truetype(str(path), size=size)
 
 
 def text_size(draw: ImageDraw.ImageDraw, text: str, font):
@@ -75,15 +88,14 @@ def make_energy_figure():
     val = pil_font(30, True)
     small = pil_font(25)
     d.text((80, 55), "中位情景下教室年用电与非监管浪费", font=title, fill="#111111")
-    d.text((80, 120), "397 间教室  单位 万千瓦时每年", font=sub, fill="#56616D")
+    d.text((80, 120), f"{DATA['parameters']['classroom_count']:g} 间教室  单位 万千瓦时每年", font=sub, fill="#56616D")
 
-    items = [
-        ("空调", 254.1, 35.6, "#2A6F97"),
-        ("照明", 108.4, 13.0, "#5EA3C7"),
-        ("风扇", 8.0, 1.2, "#8ABF8A"),
-        ("多媒体", 12.5, 1.0, "#C4A35A"),
-    ]
-    maxv = 270
+    colors = ["#5EA3C7", "#8ABF8A", "#2A6F97", "#C4A35A"]
+    items = [(row["name"], row["annual_energy_kwh"] / 1e4,
+              row["waste_energy_kwh"] / 1e4, colors[i])
+             for i, row in enumerate(DATA["equipment"])]
+    items.sort(key=lambda row: row[1], reverse=True)
+    maxv = max(row[1] for row in items) * 1.08
     y = 225
     for name, total, waste, color in items:
         d.text((90, y + 20), name, font=lab, fill="#222222")
@@ -99,7 +111,7 @@ def make_energy_figure():
         y += 165
 
     d.line((80, 875, 1720, 875), fill="#D7DDE3", width=2)
-    d.text((80, 900), "合计年用电约 383.0 万度  非监管浪费约 50.8 万度  占 13.3%", font=pil_font(31, True), fill="#17365D")
+    d.text((80, 900), f"合计年用电约 {DATA['summary']['annual_energy_kwh']/1e4:.1f} 万度  非监管浪费约 {DATA['summary']['waste_energy_kwh']/1e4:.1f} 万度  占 {DATA['summary']['waste_ratio']:.1%}", font=pil_font(31, True), fill="#17365D")
     path = FIG_DIR / "energy_baseline.png"
     img.save(path, quality=95)
     return path
@@ -567,8 +579,8 @@ def add_cover(doc):
 def add_summary(doc):
     heading(doc, "摘要", 1)
     add_text(doc, "本报告针对数百间教室在上课和自习期间缺少持续监管、照明风扇空调可能空转的问题，提出一套以远传电表为计量基础、以 DDC 和设备接口为控制核心、以数字孪生平台为管理载体的节能监控方案。方案保留现场手动控制，自动化系统负责识别空置、执行延时关闭、限制空调设定值、发现异常用电并形成工单。消防应急回路不参与节能切断，空调采用正常停机接口，不采用频繁硬断电方式。")
-    add_text(doc, "按南通大学公开资料中的 371 间公共多媒体教室和 26 间公共智慧教室计算，保守纳入 397 间教室。中位情景估算年用电量约 383.0 万千瓦时，其中因空置运行、课表与设备状态不一致、设定值不合理等造成的非监管浪费约 50.8 万千瓦时，占 13.3%。按 0.85 元每千瓦时的测算电价，年浪费电费约 43.2 万元；按 2023 年全国电力平均二氧化碳排放因子 0.5306 千克每千瓦时折算，对应约 269.5 吨二氧化碳。上述结果是工程估算，不替代学校电表实测和财务结算数据。")
-    add_text(doc, "建议先选取 30 间不同类型教室开展一学期试点，使用改造前后同类时段和相似天气条件进行校正比较。试点达到数据完整率不低于 99%、误关机事件低于每千教室日 1 次、归一化节电率不低于 12% 后，再按高浪费楼栋优先扩展。全校目标节电量为每年 45 万至 65 万千瓦时。", bold_lead="建议")
+    add_text(doc, f"按南通大学公开资料中的 371 间公共多媒体教室和 26 间公共智慧教室计算，本次计算纳入 {DATA['parameters']['classroom_count']:g} 间教室。中位情景估算年用电量约 {DATA['summary']['annual_energy_kwh']/1e4:.1f} 万千瓦时，其中因空置运行、课表与设备状态不一致、设定值不合理等造成的非监管浪费约 {DATA['summary']['waste_energy_kwh']/1e4:.1f} 万千瓦时，占 {DATA['summary']['waste_ratio']:.1%}。按 {DATA['parameters']['electricity_price_yuan_kwh']:g} 元每千瓦时的测算电价，年浪费电费约 {DATA['summary']['waste_cost_yuan']/1e4:.1f} 万元；按 2023 年全国电力平均二氧化碳排放因子 {DATA['parameters']['carbon_factor_kg_kwh']:g} 千克每千瓦时折算，对应约 {DATA['summary']['waste_carbon_ton']:.1f} 吨二氧化碳。上述结果是工程估算，不替代学校电表实测和财务结算数据。")
+    add_text(doc, f"建议先选取 30 间不同类型教室开展一学期试点，使用改造前后同类时段和相似天气条件进行校正比较。试点达到数据完整率不低于 99%、误关机事件低于每千教室日 1 次、归一化节电率不低于 12% 后，再按高浪费楼栋优先扩展。全校目标节电量为每年 {min(b['saving_kwh'] for b in DATA['benefits'])/1e4:g} 万至 {max(b['saving_kwh'] for b in DATA['benefits'])/1e4:g} 万千瓦时。", bold_lead="建议")
 
     p = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(8)
@@ -605,7 +617,17 @@ def add_toc(doc):
     table._element.set(qn("w:tblCaption"), "目录")
 
 
-def build():
+def build(data_path=ROOT.parent / "matlab" / "analysis_results.json", output=OUTPUT, font=None):
+    global DATA, FONT_REG, FONT_BOLD
+    DATA = load_results(Path(data_path))
+    FONT_REG = select_font(font)
+    bold = FONT_REG.with_name("msyhbd.ttc")
+    FONT_BOLD = bold if FONT_REG.name == "msyh.ttc" and bold.is_file() else FONT_REG
+    # Check font loading before creating any artifacts.
+    pil_font(24)
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    FIG_DIR.mkdir(parents=True, exist_ok=True)
     fig_energy = make_energy_figure()
     fig_arch = make_architecture_figure()
     fig_control = make_control_figure()
@@ -637,44 +659,42 @@ def build():
     new_page(doc)
     heading(doc, "二 年度用电量与非监管浪费估算", 1)
     heading(doc, "1 中位情景参数", 2)
-    add_text(doc, "以 397 间教室为基数，假设普通教室平均配置照明 1.30 千瓦、风扇 0.45 千瓦、空调平均输入功率 8.00 千瓦、多媒体设备 0.35 千瓦。运行小时综合考虑教学周、自习开放、夏冬季空调启用和设备非满载。空调开启边界遵循学校现行管理规定，即夏季室外最高温度连续 3 天达到 30 摄氏度以上可制冷，冬季室外最低温度连续 3 天达到 5 摄氏度以下可制热，制冷设定不低于 26 摄氏度、制热不高于 20 摄氏度，并执行人离机停[4]。")
-    rows = [
-        ("照明", "1.30", "2100", "2730", "12%", "空教室长明和自然采光充足时未分区关闭"),
-        ("风扇", "0.45", "450", "202.5", "15%", "课间或离场后未关闭"),
-        ("空调", "8.00", "800", "6400", "14%", "空置运行  门窗开启  设定值过低或过高"),
-        ("多媒体", "0.35", "900", "315", "8%", "投影与扩声待机或课后未退出"),
-    ]
+    add_text(doc, f"本次按 {DATA['parameters']['classroom_count']:g} 间教室计算，各设备平均功率、年运行时间与非监管比例见下表。" + "运行小时综合考虑教学周、自习开放、夏冬季空调启用和设备非满载。空调开启边界遵循学校现行管理规定，即夏季室外最高温度连续 3 天达到 30 摄氏度以上可制冷，冬季室外最低温度连续 3 天达到 5 摄氏度以下可制热，制冷设定不低于 26 摄氏度、制热不高于 20 摄氏度，并执行人离机停[4]。")
+    reasons = ["空教室长明和自然采光充足时未分区关闭", "课间或离场后未关闭",
+               "空置运行  门窗开启  设定值过低或过高", "投影与扩声待机或课后未退出"]
+    rows = [(e["name"], f"{e['power_kw']:.2f}", f"{e['annual_hours']:g}",
+             f"{e['power_kw']*e['annual_hours']:g}", f"{e['waste_ratio']:.0%}", reason)
+            for e, reason in zip(DATA["equipment"], reasons)]
     add_table(doc, ["设备", "平均功率 kW", "年运行 h", "单室年电量 kWh", "非监管比例", "主要原因"], rows,
               widths=[1.8, 2.1, 1.7, 2.3, 1.8, 5.2], font_size=8.7,
               aligns=[WD_ALIGN_PARAGRAPH.CENTER]*5 + [WD_ALIGN_PARAGRAPH.LEFT])
     add_text(doc, "计算关系为 年用电量等于教室数量乘设备平均功率乘年运行小时。非监管浪费等于各类设备年用电量乘相应非监管比例。参数按平均教室折算，空调功率指运行期平均输入功率，不等于铭牌最大值。", first_line=False)
     heading(doc, "2 估算结果", 2)
-    rows = [
-        ("照明", "108.38", "13.01", "11.1"),
-        ("风扇", "8.04", "1.21", "1.0"),
-        ("空调", "254.08", "35.57", "30.2"),
-        ("多媒体", "12.51", "1.00", "0.9"),
-        ("合计", "383.01", "50.78", "43.2"),
-    ]
+    rows = [(e["name"], f"{e['annual_energy_kwh']/1e4:.2f}",
+             f"{e['waste_energy_kwh']/1e4:.2f}", f"{e['waste_cost_yuan']/1e4:.1f}")
+            for e in DATA["equipment"]]
+    totals = DATA["summary"]
+    rows.append(("合计", f"{totals['annual_energy_kwh']/1e4:.2f}",
+                 f"{totals['waste_energy_kwh']/1e4:.2f}", f"{totals['waste_cost_yuan']/1e4:.1f}"))
     add_table(doc, ["分项", "年用电量 万kWh", "非监管浪费 万kWh", "浪费电费 万元"], rows,
               widths=[3.0, 3.6, 3.8, 3.3], font_size=9.2,
               aligns=[WD_ALIGN_PARAGRAPH.CENTER]*4)
-    add_text(doc, "中位情景下，教室年用电量约 383.0 万千瓦时，非监管浪费约 50.8 万千瓦时。按测算电价 0.85 元每千瓦时，浪费电费约 43.2 万元。0.85 元仅为方案比较用的综合假设值，正式财务测算应替换为学校合同电价、容量电费和分时电价的实际结构。")
+    add_text(doc, f"中位情景下，教室年用电量约 {DATA['summary']['annual_energy_kwh']/1e4:.1f} 万千瓦时，非监管浪费约 {DATA['summary']['waste_energy_kwh']/1e4:.1f} 万千瓦时。按测算电价 {DATA['parameters']['electricity_price_yuan_kwh']:g} 元每千瓦时，浪费电费约 {DATA['summary']['waste_cost_yuan']/1e4:.1f} 万元。{DATA['parameters']['electricity_price_yuan_kwh']:g} 元仅为方案比较用的综合假设值，正式财务测算应替换为学校合同电价、容量电费和分时电价的实际结构。")
     add_figure(doc, fig_energy, "图 1  中位情景下教室年用电构成与非监管浪费  橙色为浪费部分", 6.65)
 
     heading(doc, "3 不确定性与敏感性", 2)
-    rows = [
-        ("低情景", "265", "27", "10.2%", "设备功率较低  空调季较短  使用者关机习惯较好"),
-        ("中位情景", "383", "51", "13.3%", "采用本报告参数"),
-        ("高情景", "530", "86", "16.2%", "大教室比例较高  空调时长较长  调课与自习更频繁"),
-    ]
+    notes = ["设备功率较低  空调季较短  使用者关机习惯较好", "采用本报告参数",
+             "大教室比例较高  空调时长较长  调课与自习更频繁"]
+    rows = [(r["name"], f"{r['annual_energy_kwh']/1e4:.1f}",
+             f"{r['waste_energy_kwh']/1e4:.1f}", f"{r['waste_ratio']:.1%}", note)
+            for r, note in zip(DATA["scenarios"], notes)]
     add_table(doc, ["情景", "年用电 万kWh", "浪费 万kWh", "浪费率", "条件"], rows,
               widths=[2.2, 2.7, 2.5, 2.1, 6.1], font_size=9.2,
               aligns=[WD_ALIGN_PARAGRAPH.CENTER]*4 + [WD_ALIGN_PARAGRAPH.LEFT])
-    add_text(doc, "结果对空调平均功率、空调季运行小时和空置运行比例最敏感。中位情景中，空调贡献约 70% 的非监管浪费，因此项目不能只做照明人体感应，还应接入空调的启停和设定值控制。上线后应用远传电表对估算进行校准，形成按校区、楼栋、楼层、教室和设备分项逐级汇总的实测基线。")
+    add_text(doc, f"结果对空调平均功率、空调季运行小时和空置运行比例最敏感。中位情景中，空调贡献约 {DATA['equipment'][2]['waste_energy_kwh']/DATA['summary']['waste_energy_kwh']:.0%} 的非监管浪费，因此项目不能只做照明人体感应，还应接入空调的启停和设定值控制。上线后应用远传电表对估算进行校准，形成按校区、楼栋、楼层、教室和设备分项逐级汇总的实测基线。")
     heading(doc, "4 建设必要性", 2)
     add_text(doc, "第一，日常巡查属于事后纠正，无法覆盖数百间教室在全天多个时间窗口中的状态变化。自动化系统可以把空置识别和延时关机下沉到每间教室。第二，远传计量使节能效果可以核证，避免只凭总电费判断。教育部和住房城乡建设部发布的高校校园建筑节能监管导则要求按建筑和空调、动力、照明等分项采集能耗，并设置数据网关、管理平台和运行制度[5][6]。第三，系统同时提高电气异常发现能力，能识别夜间持续功率、回路过载、控制失败和设备效率下降。")
-    add_text(doc, "按 2023 年全国电力平均二氧化碳排放因子 0.5306 千克每千瓦时计算，50.8 万千瓦时浪费对应约 269.5 吨二氧化碳[10]。若方案每年节电 45 万至 65 万千瓦时，可减少约 238.8 至 344.9 吨二氧化碳。")
+    add_text(doc, f"按 2023 年全国电力平均二氧化碳排放因子 {DATA['parameters']['carbon_factor_kg_kwh']:g} 千克每千瓦时计算，{DATA['summary']['waste_energy_kwh']/1e4:.1f} 万千瓦时浪费对应约 {DATA['summary']['waste_carbon_ton']:.1f} 吨二氧化碳[10]。若方案每年节电 {min(b['saving_kwh'] for b in DATA['benefits'])/1e4:g} 万至 {max(b['saving_kwh'] for b in DATA['benefits'])/1e4:g} 万千瓦时，可减少约 {min(b['carbon_reduction_ton'] for b in DATA['benefits']):.1f} 至 {max(b['carbon_reduction_ton'] for b in DATA['benefits']):.1f} 吨二氧化碳。")
 
     heading(doc, "三 建设目标与总体要求", 1)
     add_text(doc, "建设目标是形成可计量、可判断、可控制、可追溯的教室用能闭环，并在不影响正常教学和电气安全的前提下降低无效运行。")
@@ -862,7 +882,13 @@ def build():
     add_text(doc, "投资估算用于方案比选，不替代施工图预算和招标控制价。若智慧教室已有占用传感器、控制器和网络，可复用并减少投资；旧楼配电箱空间不足、空调品牌接口不统一或需重新布线时，投资会上升。建议把平台、网关和教室节点分项报价，明确协议开放、数据归属和后续扩容单价。")
 
     heading(doc, "2 直接节能收益", 2)
-    add_text(doc, "全校运行稳定后，建议把年度节电目标设为 45 万至 65 万千瓦时，相当于中位基线的 11.7% 至 17.0%。按 0.85 元每千瓦时计算，年直接电费收益约 38.3 万至 55.3 万元。按 320 万至 450 万元投资计算，单纯以电费衡量的静态回收期约 5.8 至 11.8 年。中位投资 366 万元和中位年收益 46.8 万元对应约 7.8 年。")
+    low = min(DATA["benefits"], key=lambda b: b["saving_kwh"])
+    high = max(DATA["benefits"], key=lambda b: b["saving_kwh"])
+    add_text(doc, f"全校运行稳定后，年度节电目标为 {low['saving_kwh']/1e4:g} 万至 {high['saving_kwh']/1e4:g} 万千瓦时，"
+             f"相当于中位基线的 {low['saving_kwh']/DATA['summary']['annual_energy_kwh']:.1%} 至 {high['saving_kwh']/DATA['summary']['annual_energy_kwh']:.1%}。"
+             f"按 {DATA['parameters']['electricity_price_yuan_kwh']:g} 元每千瓦时计算，年直接电费收益约 {low['benefit_yuan']/1e4:.1f} 万至 {high['benefit_yuan']/1e4:.1f} 万元。"
+             f"按计算投资 {DATA['parameters']['investment_yuan']/1e4:g} 万元，静态回收期约 {high['payback_years']:.1f} 至 {low['payback_years']:.1f} 年。"
+             "前述分项投资表为原方案预算快照；改变教室规模或投资参数后应重新核价。")
     add_text(doc, "直接收益没有计入减少人工巡查、提前发现空调和回路故障、降低设备无效运行小时、辅助空间利用分析等价值，也没有计入平台自身电耗和年度维护费。正式可研应分别列出这些项目，避免重复计算。")
     heading(doc, "3 方案分级", 2)
     rows = [
@@ -877,7 +903,7 @@ def build():
     add_text(doc, "先批准计量和 30 间试点，再以实测数据决定全量投资。若试点显示主要浪费集中在少数楼栋，可采用 80 20 策略优先覆盖；若空调接口改造成本过高，可先完成计量、设定值管理和离场提醒，待设备更新时接入原生控制。采购合同应要求开放数据字典、接口文档、配置备份和迁移能力。")
 
     heading(doc, "十一 结论", 1)
-    add_text(doc, "南通大学教室数量多、开放时段长，依靠晚间人工巡查无法覆盖全天非监管时段。基于公开教室数量和工程参数的中位估算表明，397 间教室年用电约 383.0 万千瓦时，非监管浪费约 50.8 万千瓦时。空调是最大来源，应与照明、风扇和多媒体设备一并纳入控制。")
+    add_text(doc, f"南通大学教室数量多、开放时段长，依靠晚间人工巡查无法覆盖全天非监管时段。基于公开教室数量和工程参数的中位估算表明，{DATA['parameters']['classroom_count']:g} 间教室年用电约 {DATA['summary']['annual_energy_kwh']/1e4:.1f} 万千瓦时，非监管浪费约 {DATA['summary']['waste_energy_kwh']/1e4:.1f} 万千瓦时。空调是最大来源，应与照明、风扇和多媒体设备一并纳入控制。")
     add_text(doc, "推荐方案以远传电表提供事实基线，以 DDC 和设备接口执行本地策略，以数字孪生关联空间、设备和数据，以管理制度完成告警和工单闭环。项目应从 30 间多类型教室试点开始，并以数据完整率、误关机率、归一化节电率和安全测试作为扩展条件。这样可以在保障教学的前提下，把节能从依赖个人习惯的巡查工作转变为持续、可核证的运行管理。")
 
     new_page(doc)
@@ -945,9 +971,15 @@ def build():
         r = p.add_run(ref)
         set_run_font(r, "宋体", 9.2)
 
-    doc.save(OUTPUT)
-    print(OUTPUT)
+    doc.save(output)
+    print(output)
+    return output
 
 
 if __name__ == "__main__":
-    build()
+    parser = argparse.ArgumentParser(description="Generate the report from validated MATLAB results")
+    parser.add_argument("--data", type=Path, default=ROOT.parent / "matlab" / "analysis_results.json")
+    parser.add_argument("--output", type=Path, default=OUTPUT)
+    parser.add_argument("--font", help="Path to a font with Chinese glyphs; also configurable with REPORT_FONT")
+    args = parser.parse_args()
+    build(args.data, args.output, args.font)
